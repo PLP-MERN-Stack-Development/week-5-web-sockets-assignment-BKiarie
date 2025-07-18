@@ -21,6 +21,12 @@ export const useSocket = () => {
   const [messages, setMessages] = useState([]);
   const [users, setUsers] = useState([]);
   const [typingUsers, setTypingUsers] = useState([]);
+  const [rooms, setRooms] = useState(['general']);
+  const [currentRoom, setCurrentRoom] = useState('general');
+  const [readReceipts, setReadReceipts] = useState({}); // { messageId: Set of userIds }
+  const [reactions, setReactions] = useState({}); // { messageId: { emoji: [userIds] } }
+  const [connectionError, setConnectionError] = useState(null);
+  const [reconnecting, setReconnecting] = useState(false);
 
   // Connect to socket server
   const connect = (username) => {
@@ -48,6 +54,49 @@ export const useSocket = () => {
   // Set typing status
   const setTyping = (isTyping) => {
     socket.emit('typing', isTyping);
+  };
+
+  // Create a new room
+  const createRoom = (roomName) => {
+    socket.emit('create_room', roomName);
+  };
+
+  // Join a room
+  const joinRoom = (roomName) => {
+    setCurrentRoom(roomName);
+    socket.emit('join_room', roomName);
+  };
+
+  // Emit message_read event
+  const markMessageRead = (message, currentUserId, currentRoom, isPrivate, otherUserId) => {
+    if (!message || !currentUserId) return;
+    socket.emit('message_read', {
+      messageId: message.id,
+      room: currentRoom,
+      isPrivate,
+      otherUserId,
+    });
+  };
+
+  // Add a reaction to a message
+  const addReaction = (message, emoji, currentRoom, isPrivate, otherUserId) => {
+    if (!message || !emoji) return;
+    socket.emit('add_reaction', {
+      messageId: message.id,
+      emoji,
+      room: currentRoom,
+      isPrivate,
+      otherUserId,
+    });
+  };
+
+  // Fetch paginated messages for a room
+  const fetchMessages = async (room, before, limit = 20) => {
+    const params = new URLSearchParams({ room, limit });
+    if (before) params.append('before', before);
+    const res = await fetch(`/api/messages?${params.toString()}`);
+    const data = await res.json();
+    return data;
   };
 
   // Socket event listeners
@@ -108,6 +157,37 @@ export const useSocket = () => {
       setTypingUsers(users);
     };
 
+    // Room events
+    const onRoomList = (roomList) => {
+      setRooms(roomList);
+    };
+
+    // Read receipts
+    const onMessageReadUpdate = ({ messageId, userId }) => {
+      setReadReceipts(prev => {
+        const set = new Set(prev[messageId] || []);
+        set.add(userId);
+        return { ...prev, [messageId]: set };
+      });
+    };
+
+    // Reaction updates
+    const onReactionUpdate = ({ messageId, reactions }) => {
+      setReactions(prev => ({ ...prev, [messageId]: reactions }));
+    };
+
+    // Reconnection events
+    const onReconnect = () => {
+      setReconnecting(false);
+      setConnectionError(null);
+    };
+    const onReconnectAttempt = () => {
+      setReconnecting(true);
+    };
+    const onError = (err) => {
+      setConnectionError(err.message || 'Connection error');
+    };
+
     // Register event listeners
     socket.on('connect', onConnect);
     socket.on('disconnect', onDisconnect);
@@ -117,6 +197,12 @@ export const useSocket = () => {
     socket.on('user_joined', onUserJoined);
     socket.on('user_left', onUserLeft);
     socket.on('typing_users', onTypingUsers);
+    socket.on('room_list', onRoomList);
+    socket.on('message_read_update', onMessageReadUpdate);
+    socket.on('reaction_update', onReactionUpdate);
+    socket.on('reconnect', onReconnect);
+    socket.on('reconnect_attempt', onReconnectAttempt);
+    socket.on('error', onError);
 
     // Clean up event listeners
     return () => {
@@ -128,6 +214,12 @@ export const useSocket = () => {
       socket.off('user_joined', onUserJoined);
       socket.off('user_left', onUserLeft);
       socket.off('typing_users', onTypingUsers);
+      socket.off('room_list', onRoomList);
+      socket.off('message_read_update', onMessageReadUpdate);
+      socket.off('reaction_update', onReactionUpdate);
+      socket.off('reconnect', onReconnect);
+      socket.off('reconnect_attempt', onReconnectAttempt);
+      socket.off('error', onError);
     };
   }, []);
 
@@ -143,6 +235,17 @@ export const useSocket = () => {
     sendMessage,
     sendPrivateMessage,
     setTyping,
+    rooms,
+    createRoom,
+    joinRoom,
+    currentRoom,
+    readReceipts,
+    markMessageRead,
+    reactions,
+    addReaction,
+    fetchMessages,
+    connectionError,
+    reconnecting,
   };
 };
 
